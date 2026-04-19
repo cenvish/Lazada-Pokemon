@@ -5,5 +5,4 @@ beautifulsoup4==4.12.3
 apscheduler==3.10.4
 pydantic==2.9.2
 lxml==5.3.0
-py-cord==2.6.1
-audioop-lts==0.2.1
+nextcord==2.6.0
