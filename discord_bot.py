@@ -45,7 +45,7 @@ def stock_emoji(stock):
     return {"In Stock": "🟢", "Low Stock": "🟡", "Out of Stock": "🔴"}.get(stock, "⚪")
 
 def price_str(p):
-    return f"₱{p:,.0f}" if p else "—"
+    return f"S${p:,.0f}" if p else "—"
 
 def product_embed(p, colour=POKE_GOLD):
     current = p.get("current_price")
