@@ -45,14 +45,24 @@ def stock_emoji(stock):
     return {"In Stock": "🟢", "Low Stock": "🟡", "Out of Stock": "🔴"}.get(stock, "⚪")
 
 def price_str(p):
-    return f"S${p:,.0f}" if p else "—"
+    return f"S${p:,.2f}" if p else "—"
+
+def safe_url(url):
+    """Return URL only if valid, otherwise None (prevents Discord embed errors)."""
+    if url and url.startswith("http"):
+        return url
+    return None
 
 def product_embed(p, colour=POKE_GOLD):
     current = p.get("current_price")
     target  = p.get("target_price")
     stock   = p.get("stock", "Unknown")
     hit     = current and target and current <= target
-    embed   = nextcord.Embed(title=p.get("name", "Unknown")[:256], url=p.get("url",""), colour=POKE_GREEN if hit else colour)
+    embed   = nextcord.Embed(
+        title=p.get("name", "Unknown")[:256],
+        url=safe_url(p.get("url")),
+        colour=POKE_GREEN if hit else colour,
+    )
     embed.add_field(name="💰 Current", value=price_str(current), inline=True)
     embed.add_field(name="🎯 Target",  value=price_str(target),  inline=True)
     embed.add_field(name=f"{stock_emoji(stock)} Stock", value=stock, inline=True)
@@ -60,12 +70,12 @@ def product_embed(p, colour=POKE_GOLD):
     if hit:
         embed.add_field(name="🎉", value="TARGET PRICE REACHED!", inline=False)
     if p.get("price_history"):
-        prices = " → ".join(f"₱{h['price']:,.0f}" for h in p["price_history"][-5:] if h.get("price"))
+        prices = " → ".join(f"S${h['price']:,.2f}" for h in p["price_history"][-5:] if h.get("price"))
         if prices:
             embed.add_field(name="📈 History", value=prices, inline=False)
     if p.get("image"):
         embed.set_thumbnail(url=p["image"])
-    embed.set_footer(text="Lazada Pokémon Bot 🎮")
+    embed.set_footer(text="Lazada Bot 🎮")
     return embed
 
 # ── Bot setup ─────────────────────────────────────────────────────────────────
@@ -76,19 +86,19 @@ alert_channel_id = int(os.environ.get("ALERT_CHANNEL_ID", "0"))
 seen_alert_ids   = set()
 
 # ── Slash commands ─────────────────────────────────────────────────────────────
-@bot.slash_command(name="track", description="Track a Lazada Pokémon product")
+@bot.slash_command(name="track", description="Track a Lazada product for restock alerts")
 async def cmd_track(
     interaction: nextcord.Interaction,
     url: str = nextcord.SlashOption(description="Lazada product URL"),
-    target_price: float = nextcord.SlashOption(description="Alert when price drops to this (₱)"),
+    target_price: float = nextcord.SlashOption(description="Alert when price drops to this (S$)", required=False, default=99999),
     name: str = nextcord.SlashOption(description="Custom name (optional)", required=False, default=""),
 ):
     await interaction.response.defer()
     try:
         p = await api_post("/products", {"url": url, "target_price": target_price, "name": name or None})
         embed = nextcord.Embed(title="✅ Now tracking!", colour=POKE_GOLD,
-            description=f"**{p.get('name','Product')}** added. Alert when it hits {price_str(target_price)}.")
-        embed.add_field(name="ID",     value=str(p["id"]),         inline=True)
+            description=f"**{p.get('name','Product')}** added. You'll be alerted when it restocks.")
+        embed.add_field(name="ID",     value=str(p["id"]),            inline=True)
         embed.add_field(name="Target", value=price_str(target_price), inline=True)
         if p.get("image"): embed.set_thumbnail(url=p["image"])
         await interaction.followup.send(embed=embed)
@@ -101,7 +111,7 @@ async def cmd_list(interaction: nextcord.Interaction):
     try:
         products = await api_get("/products")
         if not products:
-            await interaction.followup.send("📭 Nothing tracked yet. Use `/track <url> <price>`!")
+            await interaction.followup.send("📭 Nothing tracked yet. Use `/track <url>`!")
             return
         header = nextcord.Embed(title=f"🎮 Tracking {len(products)} product(s)", colour=POKE_GOLD)
         embeds = [header] + [product_embed(p) for p in products[:9]]
@@ -155,12 +165,23 @@ async def cmd_checkout(
             return
         stock  = p.get("stock", "Unknown")
         colour = POKE_GREEN if stock == "In Stock" else (0xFFA500 if stock == "Low Stock" else POKE_RED)
-        status = {"In Stock": "✅ In stock — ready to buy!", "Low Stock": "⚡ Low stock — grab it fast!", "Out of Stock": "⚠️ Out of stock."}.get(stock, "⚪ Unknown.")
-        embed  = nextcord.Embed(title=f"🛒 {p.get('name','Product')[:200]}", url=p.get("url",""), description=status, colour=colour)
+        status = {
+            "In Stock":     "✅ In stock — ready to buy!",
+            "Low Stock":    "⚡ Low stock — grab it fast!",
+            "Out of Stock": "⚠️ Out of stock — you'll be alerted when it restocks.",
+        }.get(stock, "⚪ Stock status unknown.")
+        url = safe_url(p.get("url"))
+        embed = nextcord.Embed(
+            title=f"🛒 {p.get('name','Product')[:200]}",
+            url=url,
+            description=status,
+            colour=colour,
+        )
         embed.add_field(name="💰 Price",  value=price_str(p.get("current_price")), inline=True)
         embed.add_field(name="🎯 Target", value=price_str(p.get("target_price")),  inline=True)
         embed.add_field(name=f"{stock_emoji(stock)} Stock", value=stock, inline=True)
-        embed.add_field(name="🔗 Link", value=f"[Open on Lazada →]({p.get('url','')})", inline=False)
+        if url:
+            embed.add_field(name="🔗 Link", value=f"[Open on Lazada →]({url})", inline=False)
         if p.get("image"): embed.set_thumbnail(url=p["image"])
         await interaction.followup.send(embed=embed)
     except Exception as e:
@@ -177,9 +198,9 @@ async def cmd_setalerts(
 
 @bot.slash_command(name="help", description="Show all commands")
 async def cmd_help(interaction: nextcord.Interaction):
-    embed = nextcord.Embed(title="🎮 Lazada Pokémon Bot — Commands", colour=POKE_GOLD)
+    embed = nextcord.Embed(title="🎮 Lazada Bot — Commands", colour=POKE_GOLD)
     for cmd, desc in [
-        ("/track <url> <price>", "Start tracking a product"),
+        ("/track <url>",         "Start tracking a product for restocks"),
         ("/list",                "Show all tracked products"),
         ("/check <id>",          "Force a refresh now"),
         ("/checkout <id>",       "Get a direct buy link"),
@@ -188,7 +209,7 @@ async def cmd_help(interaction: nextcord.Interaction):
         ("/help",                "Show this message"),
     ]:
         embed.add_field(name=cmd, value=desc, inline=False)
-    embed.set_footer(text="Auto-refreshes every 15 min • Railway 🚂")
+    embed.set_footer(text="Auto-refreshes every 5 min • Railway 🚂")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ── Background alert poller ───────────────────────────────────────────────────
@@ -212,7 +233,7 @@ async def poll_alerts():
             if pid:
                 embed.add_field(name="ID",     value=str(pid),            inline=True)
                 embed.add_field(name="🛒 Buy", value=f"`/checkout {pid}`", inline=True)
-            embed.set_footer(text="Lazada Pokémon Bot 🎮")
+            embed.set_footer(text="Lazada Bot 🎮")
             await channel.send(embed=embed)
     except Exception as e:
         logger.warning(f"Poll error: {e}")
